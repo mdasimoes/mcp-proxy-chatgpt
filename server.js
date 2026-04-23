@@ -11,33 +11,42 @@ if (!MCP_TARGET || !MCP_TOKEN) {
   process.exit(1);
 }
 
-app.use(express.json({ limit: "10mb" }));
+app.use(express.raw({ type: "*/*", limit: "10mb" }));
 
 app.all("/mcp", async (req, res) => {
   try {
+    const headers = { ...req.headers };
+    delete headers.host;
+    headers.authorization = `Bearer ${MCP_TOKEN}`;
+
     const response = await fetch(MCP_TARGET, {
       method: req.method,
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${MCP_TOKEN}`
-      },
-      body: ["GET", "HEAD"].includes(req.method) ? undefined : JSON.stringify(req.body)
+      headers,
+      body: ["GET", "HEAD"].includes(req.method) ? undefined : req.body,
+      redirect: "manual",
     });
 
-    const contentType = response.headers.get("content-type") || "";
     res.status(response.status);
 
-    if (contentType.includes("application/json")) {
-      const data = await response.json();
-      return res.json(data);
+    response.headers.forEach((value, key) => {
+      if (key.toLowerCase() === "content-encoding") return;
+      if (key.toLowerCase() === "transfer-encoding") return;
+      res.setHeader(key, value);
+    });
+
+    if (!response.body) {
+      return res.end();
     }
 
-    const text = await response.text();
-    return res.send(text);
+    for await (const chunk of response.body) {
+      res.write(chunk);
+    }
+
+    res.end();
   } catch (error) {
-    return res.status(500).json({
+    res.status(500).json({
       error: "proxy_error",
-      message: error.message
+      message: error.message,
     });
   }
 });
